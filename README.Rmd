@@ -14,23 +14,35 @@ output:
 ---
 
 
-* Name: 
-* Project title:
-* Write-up on RPubs: <http://rpubs.com/rudeboybert/Tree_Growth_Differences>
-* Abstract: Hello World!
+* Name: Andrea Narciso
+* Project title: Risk Factors of Asthma
+* Write-up on RPubs: <http://rpubs.com/anarciso/final_project>
+* Abstract: 
 
+The graph below shows the rate of hospitalization per 100,000 of all Ambulatory Care sensitive conditions (ACSC) in New York State in 2014. The ACSCs are deemed as "preventable" because they are diseases and conditions that could have been prevented or whose detrimental effects could have been minimized through treatment outside of the hospital, through out-patient clinics or the improvement of living or environmental conditions. This shows that among the list of preventable conditions, Asthma or Chronic Obstructive Pulmonary Disease has the highest rate of hospital admissions in New York State in 2014. In this analysis, I investigated the correlational relationship between the rates of asthma, as measured by the rate of hospital admissions due to asthma per 100,000, of children under 18 and adults 18 and over and three chosen factors: air quality, income per capita and proportion of the population without health insurance in New York State in 2014. The results showed a negative, negative and positive correlation, respectively, and showed the Bronx as a consistent extreme in all of the measures.
 
-```{r, echo=FALSE, message=FALSE}
-#
-# Include code for one plot here
-#
-library(ggplot2)
-library(dplyr)
-small <- sample_n(diamonds, 2000) 
-ggplot(data=diamonds, aes(x=carat,y=price,colour=cut)) +
-  geom_point() +
-  scale_y_log10() + 
-  facet_wrap(~cut) +
-  ggtitle("Replace this plot with one of your own")
+###### Ambulatory Care Sensitive ("Preventable") Conditions
+```{r, echo=FALSE}
+
+# Top 5 PQI's - Calculations
+important_PQIs <- PQI_county %>% 
+  filter(`Patient County` != "STATEWIDE", `Year`== 2014, 
+         `PQI Number` == c("PQI_05", "PQI_08", "PQI_11", "PQI_12", "PQI_10", "PQI_03",
+                           "PQI_01", "PQI_15", "PQI_07", "PQI_13", "PQI_16", "PQI_14")) %>%
+  group_by(`PQI Name`) %>% 
+  summarise(`Rate Per 100,000` = mean(`Observed Rate Per 100,000 People`)) %>% 
+  arrange(desc(`Rate Per 100,000`)) %>% 
+  mutate(`Rate Per 100,000` = round(`Rate Per 100,000`, 0)) %>% 
+  head(5)
+
+# Top 5 PQI's - Table
+important_PQIs_plot <- important_PQIs %>% 
+  ggplot(data = ., aes(x = reorder(`PQI Name`, -`Rate Per 100,000`), 
+                       y = `Rate Per 100,000`,
+                       fill = `Rate Per 100,000` > 300)) +
+  geom_bar(stat = "identity") + 
+  labs(x = "Disease") +
+  guides(fill = FALSE)
+important_PQIs_plot
+
 ```
-

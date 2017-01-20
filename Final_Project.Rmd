@@ -1,0 +1,373 @@
+---
+title: "Risk Factors of Asthma"
+author: "Andrea Narciso"
+date: "1/19/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+setwd("/Users/andreanarciso/Documents/Middlebury College/Junior Year S1/Math 0216 - Data Science/Final_Project")
+
+library(tidyverse)
+library(stringr)
+library(broom)
+library(dplyr)
+library(ggplot2)
+library(maptools)
+library(readr)
+library(lubridate)
+library(Quandl)
+library(tm)
+library(knitr)
+
+PQI_county <- read_csv("PQI_County_2009.csv")
+AQI_2014 <- read_csv("daily_summary_2014_ozone.csv")
+NY_all_data_2014 <- read_csv("ACS_2014_all_data.csv")
+```
+
+## Introduction
+
+### Why is this Important?
+
+The graph below shows the rate of hospitalization per 100,000 of all Ambulatory Care sensitive conditions (ACSC) in New York State in 2014. The ACSCs are deemed as "preventable" because they are diseases and conditions that could have been prevented or whose detrimental effects could have been minimized through treatment outside of the hospital, through out-patient clinics or the improvement of living or environmental conditions. Thus, by determining and analyzing the potential causes of these conditions, NY state can decrease the rate of hospitalization, which could save the people with these conditions an expensive trip to the hospital, and from having to skip school or work to do so. As a result, this project is not only beneficial for people with these conditions, but also for the government, public health officials, employers, parents and children alike. 
+
+##### Figure 1: Ambulatory Care Sensitive ("Preventable") Conditions
+```{r, echo=FALSE}
+
+# Top 5 PQI's - Calculations
+important_PQIs <- PQI_county %>% 
+  filter(`Patient County` != "STATEWIDE", `Year`== 2014, 
+         `PQI Number` == c("PQI_05", "PQI_08", "PQI_11", "PQI_12", "PQI_10", "PQI_03",
+                           "PQI_01", "PQI_15", "PQI_07", "PQI_13", "PQI_16", "PQI_14")) %>%
+  group_by(`PQI Name`) %>% 
+  summarise(`Rate Per 100,000` = mean(`Observed Rate Per 100,000 People`)) %>% 
+  arrange(desc(`Rate Per 100,000`)) %>% 
+  mutate(`Rate Per 100,000` = round(`Rate Per 100,000`, 0)) %>% 
+  head(5)
+
+# Top 5 PQI's - Table
+important_PQIs_plot <- important_PQIs %>% 
+  ggplot(data = ., aes(x = reorder(`PQI Name`, -`Rate Per 100,000`), 
+                       y = `Rate Per 100,000`,
+                       fill = `Rate Per 100,000` > 300)) +
+  geom_bar(stat = "identity") + 
+  labs(x = "Disease") +
+  guides(fill = FALSE)
+important_PQIs_plot
+
+```
+
+The graph above was a result of an exploratory data analysis on ACSC data. It shows that Constructive Pulmonary Disease (COPD)- a lung disease- and Asthma in Adults clearly has the highest rate of hospitalization of 500 admissions per 100,000 individuals. This is almost double the rate of hospitalization for Heart Failure. This is interesting because Heart Attacks are often portrayed and glamorized on the media, which leads people to believe that it happens more often than it actually does. 
+
+### Project Goals
+
+My project was to investigate the risk factors that result in such a high rate of hospitalization for asthma in New York State in 2014, through the use of a correlational study. I decided to focus on air quality because it is an environmental factor known to woren asthmatic symptoms. I also investigated income per capita and health insurance because they are two socioeconomic factors that prevent people from receiving proper health care. 
+
+##### My Research Question:
+What is the relationship between the rates of asthma, as measured by the rate of hospital admissions due to asthma per 100,000, of children under 18 and adults 18 and over and three chosen factors: air quality, income per capita and proportion of the population without health insurance in New York State in 2014. 
+
+It is important to note that this study operates on county level data, meaning that each data point in the graph represents one county. Additionally, this is only a correlation study and thus, we cannot assume causality. However, this project is only a starting point and future research can be done to further investigate the directionality and causality of the relationship between asthma and the proposed risk factors. 
+
+## Results
+
+```{r, echo=FALSE}
+# All Calculations
+
+# AIR QUALITY (AQI)
+
+NY_AQI_2014 <- AQI_2014 %>% 
+  filter(`State Name` == "New York") %>%
+  mutate(year = year(`Date Local`),
+         county = str_to_title(`County Name`)) %>% 
+  rename(county_code = `County Code`, date = `Date Local`) %>% 
+  select(county_code, AQI, year, date, county) 
+
+# AQI in NY state (fixed repeated values BY finding the avg AQI /day/county)
+NY_AQI_2014_fixed <- NY_AQI_2014 %>% 
+  group_by(year, county, county_code, date) %>% 
+  summarise(AQI_fixed = mean(AQI))
+
+# AQI - Avg Year (WORKING SET)
+NY_AQIavg_2014 <- NY_AQI_2014_fixed %>% 
+  group_by(year, county, county_code) %>% 
+  summarise(avg_year_AQI = mean(AQI_fixed))
+
+# ASTHMA
+
+# Asthma (young and older adults) Rates by County (2011-2014)
+asthma_county <- PQI_county %>% 
+  mutate(asthma = ifelse(`PQI Name` == "Asthma in Younger Adults", "asthma_under18",
+                         ifelse(`PQI Name` == 
+                                  "Chronic Obstructive Pulmonary Disease (COPD) or Asthma in Older Adults", 
+                                "asthma_COPD_over18", "0")),
+         county = str_to_title(`Patient County`)) %>% 
+  rename(rate_per_100000 = `Observed Rate Per 100,000 People`, year = `Year`) %>% 
+  select(year, rate_per_100000, asthma, county) %>% 
+  filter(asthma != "0", county != "Statewide")
+
+# Asthma (young and older adults) Rates by County in 2014 
+asthma_county_2014 <- asthma_county %>% 
+  filter(year == 2014) %>% 
+  select(-year) 
+
+# DEMOGRAPHIC DATA (income, health insurance)
+
+# Cut down to only county data
+NY_countydata_2014 <- NY_all_data_2014 %>% 
+  filter(between(GEO.id2, 36000, 37000)) %>% 
+  mutate(`GEO.display-label` = removeWords(`GEO.display-label`, " County, New York")) %>% 
+  rename(county = `GEO.display-label`)
+
+# Demographic data (WORKING SET)
+NY_demo_data_2014 <- NY_countydata_2014 %>% 
+  rename(per_capita_income = `HC01_VC118`, mean_household_income = `HC01_VC86`,
+         median_household_income = `HC01_VC85`, percent_below_poverty = `HC03_VC161`,
+         w_ins = `HC03_VC131`, private_ins = `HC03_VC132`, 
+         public_ins = `HC03_VC133`, no_ins = `HC03_VC134`) %>% 
+  select(county, per_capita_income, mean_household_income, 
+         median_household_income, percent_below_poverty,  
+         w_ins, private_ins, public_ins, no_ins) %>% 
+  mutate(per_capita_income_K = round(per_capita_income / 1000, 0))
+
+# COMBINING DATA BY COUNTY - ASTHMA RATES + AIR QUALITY, DEMOGRAPHICS
+
+# Part 1: Combine Demographics and Air Quality
+demo_AQI_2014 <- inner_join(NY_demo_data_2014, NY_AQIavg_2014, by = "county")
+# Part 2: Combine Demographics & Air Quality w/ Asthma Rates
+combined_data <- left_join(demo_AQI_2014, asthma_county_2014, by = "county")
+
+```
+
+### Introduction to Results
+First, I will look at the correlational relationship between asthma and air quality. In that section, I will point out the outliers in the data, specifically the Bronx. I will explain why it is an outlier and why it makes sense to remove the Bronx as a data point in the analysis of asthma and air quality. Then I will show you the new and improved graph, demonstrating the relationship between asthma and air quality, discluding the Bronx outlier. 
+Then, I will look at the relationship of Asthma in relation to Income per Capita and Proprtion of the Population without Health Insurance. In both of these cases, I decided to keep the outliers in my data.
+
+In investigating each of these correlational relationships, I used the linear model to determine the magnitude of the relationship and its confidence intervals. The magnitude represents the slope of the graph-- as one of the risk factors increases, to what degree the rate of asthma increases of decreases. The corresponding confidence intervals represents the range of magnitudes where we are 95% certain that the true value lies within.
+
+### Data Sets
+The rate of asthma in children and adults is measured using the rate of hospital admissions for asthma per 100,000, sourced from the Hospital Inpatient Prevention Quality Indicators for Adult Discharges by County data set produced by the Agency for Healthcare Research and Quality.
+
+The air quality is measured using the Air Quality Index (AQI), sourced from the Air Quality Index Report for 2014 by the New York State Department of Environmental Conservation.
+
+The income per capita and proportion of the population without health insurance is measured in thousands of dollars and percentage, respectively. Both were obtained from the American Community Survey 2014 data set produced by the United States Census Bereau. 
+
+All of these three data sets combined to provide the data for analysis. However, each data set had 62, 26 and 39 in New York state, respectively. Thus, it is important to note that when joining the three data sets, only 22 out of the 62 counties counties were analyzed. 
+
+### Asthma vs. Air Quality
+
+##### Figure 2: Asthma vs. Air Quality and Income Per Capita - Outliers?
+```{r, echo=FALSE}
+# Graph Representation of Asthma vs. AQI
+asthma_AQI_plot_2014 <- combined_data %>% 
+  ggplot(data = ., aes(x = avg_year_AQI, y = rate_per_100000,
+                       col = per_capita_income_K)) + 
+  facet_wrap(~asthma, scales = "free") + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) + 
+  geom_text(aes(label = ifelse(county %in% c("Bronx", "New York"),
+                               as.character(county), "")),hjust=-0.2,vjust=0.2) +
+  labs(x = "Average Air Quality Index (AQI) in 2014", 
+       y = "Rate of Asthma (Hospital Admissions per 100,000)")
+asthma_AQI_plot_2014
+```
+
+##### Adults: -10.2 (-39.3, 19.0) Children: -0.3 (-8.2, 7.5). 
+
+As shown in the graph above, there is a negative correlation of between AQI and rate of asthma. A higher AQI means poorer air quality and a lower AQI means better air quality. Thus, as the AQI increases- where there is poorer air quality and and more pollution- there is a lower rate of asthma. These results do not make sense, because better air quality should be associated less asthma.
+
+In this graph, Bronx is a clear outlier. Despite it's low AQI and good air quality, there is an extremely high rate of asthma. In this graph, I also included the income per capita, as shown by the colors of the point. This shows that New York is also an outlier, with an extremely high income per capita, which makes sense due to the high concentration of wealth in Manhattan. However, the Bronx is far away from the line of best fit, while New York is much closer to it. While both counties are outliers in the data, the Bronx may have an effect on the magnitude or directionality of the line of best fit. 
+
+It is important to mention the confidence intervals, shown right below the graph. The correlation for adults has a much higher magnitude of -10.2, while the correlation for children is much lower, with a value of -0.3. As -0.3 is very close to 0, it is possible that there is no relationship between the two factors. However, the confidence intervals for both age group are at a large range, wherein 0 is in between the two numbers. This suggests that it is possible that there may even be no correlation between the two graphs. 
+
+Following this analysis, I will not discuss the confidence intervals as much as I just did, because they are all very similar and can be analyzed in the same way. Thus, I will only mention it when they provide a new and interesting perspective to the data analysis. 
+
+##### Figure 3: Asthma vs. Air Quality and Percentage Without Insurance - Outliers?
+```{r, echo=FALSE}
+# Graph Representation of Asthma vs. AQI
+asthma_AQI_plot_2014 <- combined_data %>% 
+  ggplot(data = ., aes(x = avg_year_AQI, y = rate_per_100000,
+                       col = no_ins)) + 
+  facet_wrap(~asthma, scales = "free") + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) + 
+  geom_text(aes(label = ifelse(county %in% c("Bronx", "Queens"),
+                               as.character(county), "")),hjust=-0.2,vjust=0.2) +
+  labs(x = "Average Air Quality Index (AQI) in 2014", 
+       y = "Rate of Asthma (Hospital Admissions per 100,000)")
+asthma_AQI_plot_2014
+```
+
+This graph above depicts the same relationship as Figure 2, however, its colors represent the proportion of the population without health insurance- lighter blue representing a greater percentage of the population without it. Clearly, the Bronx and Queens have a much greater proportion of the population without health insurance. This emphasizes the Bronx as an outlier in the data, as it is an extreme on all scales- rate of asthma, air quality and insurance. 
+
+#### Bronx is an Outlier
+
+Thus, I will investigate why Bronx is an outlier and discuss whether it makes more sense to keep or remove it in the data analysis.
+
+Firstly, I started by doing research. THe South Bronx Environmental Health and Policy Study showed that the death rate and hospitalization rate due to asthma is 3 and 5 times the national average, respectively. This supports the data, which shows a disproportionately high rate of asthma in the Bronx. Additionally, City-Data wrote that the proportion of the population below poverty is 2 times the vnational average in the Bronx. This also supports the data, which indicated that the Bronx had an very high proportion of the population without access to health insurance. 
+
+The New York Environment Report wrote that a third of New York city's trash goes to or passes through waste handling facilities in the Bronx. The article stated that the combination of the emissions of garbage trucks passing through, the waste and industrial facilities, results in extremely poor air quality in the Bronx. This actually contradicts the data shown in Figure 2, which indicated that the Bronx had good air quality. As multiple sources corroborated the poor air quality in the Bronx, it is most likely that the data on the Bronx used in this data analysis was incorrect. This could be because the indicators used to measure air quality did not measure the pollution causing factors in the Bronx. Thus, it made more sense to disclude the Bronx from the analysis of the relationship between asthma and air quality. 
+
+##### Figure 4: Asthma vs. Air Quality: No Outliers
+```{r, echo=FALSE}
+asthma_AQI_plot_2014_2 <- combined_data %>% 
+  filter(!(county %in% c("Bronx"))) %>%
+  ggplot(data = ., aes(x = avg_year_AQI, y = rate_per_100000)) +
+  facet_wrap(~asthma, scales = "free") + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(x = "Average Air Quality Index (AQI) in 2014", 
+       y = "Rate of Asthma (Hospital Admissions per 100,000)") 
+asthma_AQI_plot_2014_2
+```
+
+##### Adults: 0.6 (-25.0, 23.8) Children: 3.3 (-0.8, 7.4).
+As shown in the graph above, removing the Bronx as an outlier changed the directionality of the results. This shows that there is a positive correlation of 0.6 and 3.3 between AQI and rate of asthma, for adults and children respectively. This makes more sense as poorer air quality is associated with higher rates of asthma. In this case, the confidence intervals for the children are interesting because while they cross 0, the majority of the values is in the postive. This suggests that we are confident that there is a positive correlation between air quality and asthma in children. 
+
+### Asthma vs Income Per Capita
+
+##### Figure 5: Asthma vs. Income Per Capita
+```{r, echo=FALSE}
+# Graph Representation of Asthma vs. Per Capita Income
+per_capita_income_asthma_plot <- ggplot(data = combined_data, 
+                               aes(x = per_capita_income_K, y = rate_per_100000)) +
+  facet_wrap(~asthma, scales = "free") + 
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_text(aes(label = ifelse(county == "Bronx" | county == "New York",
+                               as.character(county), "")),hjust=0.5,vjust=1.2) +
+  labs(x = "Income Per Capita (Thousand USD)", 
+       y = "Rate of Asthma (Hospital Admissions per 100,000)") + 
+  coord_cartesian(xlim=c(15,70))
+per_capita_income_asthma_plot
+```
+
+##### Adults: -5.5 (-12.4, 1.4) Children: -0.2 (-2.1, 1.6).
+Figure 5 shows that there is a negative correlation of -5.5 and -0.2 between income per capita and rate of asthma, for adults and children, respectively. This makes sense as higher income may be associated with better health care and cleaner living situations, which is associated with lower rates of asthma. The confidence intervals suggest that it is very likely that there is a negative correlation between the two factors for the adults, while it is likely that there is no correlation between the two factors for children.
+
+In this analysis, I did not decide to remove the Bronx as an outlier as doing so did not change the directionality of the correlation. Additionally, external sources corroborated that the Bronx does have a extremely high proportion of the population without insurance. 
+
+###Asthma vs. Proportion Without Health Insurance
+
+##### Figure 6: Asthma vs. Proportion Without Health Insurance
+```{r, echo=FALSE}
+# Graph Representation of Asthma vs. No Insurance 
+no_ins_asthma_plot <- ggplot(data = combined_data, 
+                             aes(x = no_ins,y = rate_per_100000))+
+  facet_wrap(~asthma, scales = "free") +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  geom_text(aes(label = ifelse(no_ins >12,
+                               as.character(county), ""),hjust=0.8,vjust=1.2)) +
+  labs(x = "% Without Health Insurance", 
+       y = "Rate of Asthma (Hospital Admissions per 100,000)") + 
+  coord_cartesian(xlim=c(3,15))
+no_ins_asthma_plot
+```
+
+##### Adults: 21.1 (-7.0, 49.2) Children: 9.7 (2.2, 17.3).
+Figure 6 shows a positive correlation of 21.1 and 9.7 between the proportion of the population without health insurance and rate of asthma. This makes sense, because without health insurance, people are unlikely to get the health care to take care of the asthmatic symptoms. Consequently, they probably only going to see a doctor if the asthma got really bad and they were forced to go the emergency room, resulting in a higher rate of hospital admissions due to asthma. 
+
+It is important to note that this is only a correlational study. Thus, we cannot assume that the lack of health insurance causes a higher rate of asthma. However, the correlation between the two factors serve as a starting point, and further research can be done to analyze the causality of the relationship. 
+
+The graph above show the Bronx and the Queens are outliers. However, removing either did not change the directionality of results, so I decided not to disclude them from the analysis. 
+
+While the confidence intervals indicate that a relavtively chance that the correlation between the two factors for adults is positive, it is almost certain that there is a positive relationship for children. This is important because in no other combination of factors did both ends of the confidence intervals lie in the positive range. This suggests that there is a stronger relationship between health insurance and rate of asthma for children. This could be because children are more sensitive to pollution or that it is more difficult for children to get the proper health care that they need. 
+
+## Conclusion
+The results showed a negative relationship between air quality and rate of asthma after removing the outlier, a negative relationship between income per capita and rate of asthma and a positive relationship between the proportion of the population without health insurance and rate of asthma. 
+
+While these correlational relationships are important, finding the Bronx as an outlier is just as interesting and informative. The Bronx has a very high rate of asthma, a very low income per capita and a high proportion of the population without health insurance. Additionally, external sources have shown that the Bronx has extremely poor air quality. Thus, moving forward it is not only important to investigate what can be done to lower the rate of asthma in New York state as a whole, but also what can be done to reduce the pollution in the Bronx, provide the poorer populations with proper health care and determine what other factors contributing to the extremely high rate of asthma in the Bronx. Future research can be done to investigate other causes of asthma, like home pollutants, smoking or secondhand smoke.
+
+In this analysis, I only focused on New York State in 2014. However, this is only a first step and future research should be done to investigate the prevalence of asthma throughout the United States and beyond just the year of 2014. Additionally, I used the AQI to measure air quality and this has shown to be problematic in measuring the air quality of the Bronx. Thus, future research should look at other possible pollutants and how they correspond to asthma. Also, after reading the article on the prevalence of waste and industrial facilities, future analysis should look into the relationship between rats of asthma and the proximity to these facilities and highways. While it was insightful to look at income per capita, we need to further investigate other measures of income, such as income per household or unemployment. Additionally, futher research can be done to look at other factors that may prevent people from attaining the proper health care, such as proximity to the nearest hospital or the number of local free clinics. 
+
+This analysis only investigated three risk factors and future research should broaden the search to determine what else can be done to reduce the hospitalizations due to asthma and the severity of the symptoms. This research is important because if the United States as a whole is able to decrease the prevalence of asthma, we will be able to decrease the long term costs associated with the disease.
+
+### Works Cited
+
+##### Data Sets
+https://health.data.ny.gov/Health/Hospital-Inpatient-Prevention-Quality-Indicators-P/iqp6-vdi4
+http://www.dec.ny.gov/cfmx/extapps/aqi/aqi_info.cfm#AQI
+https://www.census.gov/programs-surveys/acs/
+
+##### Other Information
+http://www.icisnyu.org/south_bronx/AsthmaandAirPollution.html
+http://www.nyenvironmentreport.com/the-bronx-is-breathing/
+http://www.city-data.com/poverty/poverty-Bronx-New-York.html
+
+### Reference Tables
+
+##### Linear Model: 18 and Over - With Outliers
+```{r , echo=FALSE}
+# LINEAR MODEL
+
+combined_data2 <- combined_data %>% 
+  spread(asthma, rate_per_100000)
+
+# LM: Over 18
+lm_over18 <- lm(asthma_COPD_over18 ~ avg_year_AQI + per_capita_income_K + no_ins,
+                data = combined_data2)
+lm_over18_table <- tidy(lm_over18, conf.int = TRUE) %>% 
+  select(term, estimate, p.value, conf.low, conf.high) %>% 
+  mutate(estimate = round(estimate, 1),
+         p.value = round(p.value, 2),
+         conf.low = round(conf.low, 1),
+         conf.high = round(conf.high, 1)) %>% 
+  kable()
+lm_over18_table
+
+
+```
+
+##### Linear Model: Under 18 - With Outliers
+```{r, echo=FALSE}
+
+# LM: Under 18
+lm_under18 <- lm(asthma_under18 ~ avg_year_AQI + per_capita_income_K + no_ins,
+                data = combined_data2)
+
+lm_under18_table <- tidy(lm_under18, conf.int = TRUE) %>% 
+  select(term, estimate, p.value, conf.low, conf.high) %>% 
+  mutate(estimate = round(estimate, 1),
+         p.value = round(p.value, 2),
+         conf.low = round(conf.low, 1),
+         conf.high = round(conf.high, 1)) %>% 
+  kable()
+lm_under18_table
+```
+
+##### Linear Model: 18 and Over - Without Outliers
+```{r, echo=FALSE}
+# LINEAR MODEL W/O OUTLIERS
+
+combined_data_no_outliers <- combined_data2 %>% 
+  filter(county != "Bronx")
+
+# LM: Over 18
+lm_over18_out <- lm(asthma_COPD_over18 ~ avg_year_AQI + per_capita_income_K + no_ins,
+                data = combined_data_no_outliers)
+lm_over18_out_table <- tidy(lm_over18_out, conf.int = TRUE) %>% 
+  select(term, estimate, p.value, conf.low, conf.high) %>% 
+  mutate(estimate = round(estimate, 1),
+         p.value = round(p.value, 2),
+         conf.low = round(conf.low, 1),
+         conf.high = round(conf.high, 1)) %>% 
+  kable()
+lm_over18_out_table
+```
+
+##### Linear Model: Under 18 - Without Outliers
+```{r, echo=FALSE}
+# LM: Under 18
+lm_under18_out <- lm(asthma_under18 ~ avg_year_AQI + per_capita_income_K + no_ins,
+                 data = combined_data_no_outliers)
+lm_under18_out_table <- tidy(lm_under18_out, conf.int = TRUE) %>% 
+  select(term, estimate, p.value, conf.low, conf.high) %>% 
+  mutate(estimate = round(estimate, 1),
+         p.value = round(p.value, 2),
+         conf.low = round(conf.low, 1),
+         conf.high = round(conf.high, 1)) %>% 
+  kable()
+lm_under18_out_table
+```
